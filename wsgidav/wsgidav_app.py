@@ -51,6 +51,7 @@ from wsgidav import __version__, compat, util
 from wsgidav.dav_provider import DAVProvider
 from wsgidav.default_conf import DEFAULT_CONFIG
 from wsgidav.fs_dav_provider import FilesystemProvider
+from wsgidav.arpa2reservoir_Provider import ARPA2ReservoirProvider
 from wsgidav.http_authenticator import HTTPAuthenticator
 from wsgidav.lock_manager import LockManager
 from wsgidav.lock_storage import LockStorageDict
@@ -307,9 +308,22 @@ class WsgiDAVApp(object):
                 provider = prov_class(
                     *provider.get("args", []), **provider.get("kwargs", {})
                 )
+            elif "ldapuri" in (dict,):
+                #TODO# This can be an instance of the "provider" above...
+                # Syntax:
+                #  <mount_path>: {"ldapuri": <ldapuri>,
+                #                 "realms": <path>,
+                #                 "app": <string>,
+                #                 "readonly": <bool>}
+                provider = ARPA2ReservoirProvider(
+                    provider["ldapuri"],
+                    provider.get("realms", "/var/arpa2/reservoir"),
+                    provider.get("app", None),
+                    bool(provider.get("readonly", False))
+                )
             else:
                 # Syntax:
-                #   <mount_path>: {"root": <path>, "redaonly": <bool>}
+                #   <mount_path>: {"root": <path>, "readonly": <bool>}
                 provider = FilesystemProvider(
                     provider["root"], bool(provider.get("readonly", False))
                 )
