@@ -312,13 +312,13 @@ class WsgiDAVApp(object):
                 #TODO# This can be an instance of the "provider" above...
                 # Syntax:
                 #  <mount_path>: {"ldapuri": <ldapuri>,
-                #                 "realms": <path>,
-                #                 "app": <string>,
+                #                 "homedir": <path>,
+                #                 "apphint": <string>,
                 #                 "readonly": <bool>}
                 provider = ARPA2ReservoirProvider(
                     provider["ldapuri"],
-                    provider.get("realms", "/var/arpa2/reservoir"),
-                    provider.get("app", None),
+                    provider.get("homedir", "/var/arpa2/reservoir"),
+                    provider.get("apphint", None),
                     bool(provider.get("readonly", False))
                 )
             else:

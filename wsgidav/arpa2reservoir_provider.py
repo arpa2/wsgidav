@@ -50,11 +50,7 @@ import os
 
 import re
 
-uuid_patn = 
-
 uuid_re = re.compile ('^(?P<uuid>[0-9a-f]{8,8}-[0-9a-f]{4,4}-[0-9a-f]{4,4}-[0-9a-f]{4,4}--[0-9a-f]{12,12})$')
-uuid_name_re = re.compile ('^(?P<uuid>[0-9a-f]{8,8}-[0-9a-f]{4,4}-[0-9a-f]{4,4}-[0-9a-f]{4,4}--[0-9a-f]{12,12}) (?P<name>.+)$')
-uuid_name_re = re.compile ('^(?P<uuid>[0-9a-f]{8,8}-[0-9a-f]{4,4}-[0-9a-f]{4,4}-[0-9a-f]{4,4}--[0-9a-f]{12,12})( (?P<name>.+))?$')
 
 
 import uuid
@@ -68,12 +64,9 @@ def random_uuid ():
 import urllib
 
 
-import ldap
-from ldap import MOD_ADD, MOD_DELETE, MOD_REPLACE, MOD_INCREMENT
-from ldap import SCOPE_BASE, SCOPE_ONELEVEL, SCOPE_SUBTREE
-from ldap import NO_SUCH_OBJECT, ALREADY_EXISTS, NOT_ALLOWED_ON_NONLEAF
 
-basedn = 'ou=Reservoir,o=arpa2.net,ou=InternetWide'
+from arpa2 import reservoir
+
 
 
 
@@ -94,20 +87,139 @@ class ReservoirResource (DAVNonCollection):
 
 	def __init__ (self, path, environ):
 		DAVNonCollection.__init__ (self, path, environ)
+		self.resfile = None
 
-	def get_content_length (self):
-
-	def get_content_type (self):
-
-	def get_content (self):
-
-	def support_ranges (self):
+	#TODO# Construct from reservoir.Resource
 
 	def begin_write (self, content_type=None):
+		if self.resfile is not None:
+			self.resfile.close ()
+		if content_type is not None:
+			self.resource ['mediaType'] = [content_type]
+		isbin = content_type [:5] != 'text/'
+		self.resfile = self.resource.open (writing=True, reading=False, binary=isbin, truncate=True)
+		return self.resfile
+
+	# def copy_move_single (self, dest_path, is_move)
+	#   --> Not implemented yet
+
+	# def create_collection (self, name)
+	# def create_empty_resource (self, name)
+	#   --> Default implementation is fine
+
+	# def delete (self)
+	#   --> Not implemented yet
 
 	def end_write (self, with_errors):
+		self.resfile.close ()
+		self.resfile = None
+
+	# def finalize_headers (self, environ, response_headers)
+	#   --> No intention of doing anything
+
+	def get_content (self):
+		if self.resfile is not None:
+			self.resfile.close ()
+		isbin = self.resource ['mediaType'] [0] [:5] != 'text/'
+		self.resfile = self.resource.open (writing=False, reading=True, binary=isbin)
+		return self.resfile
+
+	def get_content_length (self):
+		size = 0
+		for hash in self ['documentHash']:
+			if hash [:6] == '_size ':
+				size = int (hash [6:])
+		return size
+
+	def get_content_type (self):
+		return self.resource ['mediaType'] [0]
+
+	# def get_creation_date (self)
+	#   --> Not implemented yet
+
+	def get_descendants (self, collections=True, resources=True, depth_first=False, depth='infinity', add_self=False):
+		return [ self.resource ]
+
+	# def get_directory_info (self)
+	# def get_display_info (self)
+	#   --> Default kept as is
+
+	def get_display_name (self):
+		if 'cn' in self.resource:
+			return self.resource ['cn'] [0]
+		else:
+			return self.resource ['uniqueIdentifier'] [0]
+
+	def get_etag (self):
+		for hash in self ['documentHash']:
+			if hash [:7] == 'sha256 ':
+				return hash [7:]
+		return None
+
+	def get_href (self):
+		#TODO# Is there a prefix path?  Is this the mount_path?
+		return '/%s/%s' % (self.resource.get_colluuid (), self.resource.get_resuuid ())
+
+	def get_last_modified (self):
+		# Not implemented, this is the suggested bail-out response
+		return None
+
+	# def get_member_list (self)
+	# def get_member_names (self)
+	#   --> Meaningless for a Resource
+
+	def get_preferred_path (self):
+		return '/%s/%s' % (self.resource.get_colluuid (), self.resource.get_resuuid ())
+
+	# def get_properties (self, mode, name_list=None)
+	# def get_property_names (self, is_allprop)
+	# def get_property_value (self, name)
+	#   --> Used the default implementation
+
+	def get_ref_url (self):
+		return '/%s/%s' % (self.resource.get_colluuid (), self.resource.get_resuuid ())
+
+	# def handle_copy (self, dest_path, depth_infinity)
+	# def handle_delete (self)
+	# def handle_move (self, dest_path)
+	#   --> Used the default implementation
+
+	# def is_locked (self)
+	#   --> Assumed the default implementation will work
+
+	# def move_recursive (self, dest_path)
+	#   --> Not implemented here
+
+	# def prevent_locking (self)
+	# def remove_all_locks (self, recursive)
+	# def remove_all_properties (self, recursive)
+	#   --> Assumed the default implementation will work
 
 	def resolve (self, script_name, path_info):
+		return None
+
+	# def set_last_modified (self, dest_path, time_stamp, dry_run)
+	# def set_property_value (self, name, value, dry_run)
+	#   --> Not implemented here
+
+	def support_content_length (self):
+		return True
+
+	def support_etag (self):
+		return 'documentHash' in self.resource.keys ()
+
+	def support_modified (self):
+		return False
+
+	def support_ranges (self):
+		#TODO# Perhaps test if seekable()
+		return False
+
+	def support_recursive_delete (self):
+		return False
+
+	def support_recursive_move (self):
+		return False
 
 
 #
@@ -115,110 +227,169 @@ class ReservoirResource (DAVNonCollection):
 #
 
 
-class ReservoirResourceIndex (DAVCollection):
+class ReservoirIndex (DAVCollection):
 
 	def __init__ (self, path, environ, domain, colluuid):
 		DAVCollection.__init__ (self, path, environ, domain, colluuid)
 		self.domain = domain
 		self.colluuid = colluuid
 
-	def colldn (self, colluuid):
-		return 'resins=%s,%s' + (colluuid, self.basedn)
+	#TODO# Construct from reservoir.Index
 
-	def create_empty_resource (self, name):
-		assert not uuid_re.match (name), 'Resource names must not look like UUIDs'
-		raise NotImplementedError ('#TODO# Pick a random UUID, create Resource object for it')
+	# def begin_write (self, mediatype):
+	#   -> Not sure what it means to a Collection...
+
+	# def copy_move_single (self, dest_path, ...)
+	#   -> Not yet implemented
 
 	def create_collection (self, collname):
 		assert not uuid_re.match (collname), 'Collection names must not look like UUIDs'
-		raise NotImplementedError ('#TODO# Pick a random UUID, create a resins object for it')
-		raise NotImplementedError ('#TODO# Add a reservoirRef with the new "UUID name"')
-		colluuid = random_uuid ()
-		dn1 = 'resins=' + colluuid + ',associatedDomain=' + self.environ ['config'] ['HTTP_HOST'] + ',' + base
-		at1 = [
-			('objectClass', [
-				'reservoirCollection',
-				'resourceInstance',
-				'accessControlledObject',
-				'reservoirIndex']),
-			('rescls', reservoir_uuid),
-			('resins', colluuid),
-			('cn', collname),
-		]
-		dap.add_s (dn1, at1)
-		raise NotImplementedError ('#TODO# Insert colluuid ascollname in the index of self')
+		clx = copy.copy (self.index)
+		reservoir.add_collection (clx, collname)
+		#TODO# We have a reservoir.Index, wrap it in a ReservoirIndex
+		return clx
+
+	def create_empty_resource (self, name):
+		assert not uuid_re.match (name), 'Resource names must not look like UUIDs'
+		res = reservoir.add_resource (self.index,
+				objectClass=['reservoirResource'],
+				mediaType=['application/octet-stream'],  # Lack of info :'-(
+				uniqueIdentifier=[name])
+		#TODO# We have a reservoir.Resource, wrap it in a ReservoirResource
+		return res
+
+	# def delete (self)
+	#   -> Not yet implemented
+
+	# def end_write (self)
+	#   -> Not sure what it means to a Collection...
+
+	# def finalize_headers (self, environ, ...)
+	#   -> No need to customise headers (except? Vary: User --> use arpa2.wsgi.byoid)
+
+	# def get_content (self)
+	# def get_content_length (self)
+	# def get_content_type (self)
+	#   -> Not sure what it means to a Collection...
+
+	# def get_creation_date (self)
+	#   -> Not implemented yet
+
+	def get_descendants (self, collections=True, resources=True, depth_first=False, depth='infinity', add_self=False):
+		#TODO# depth... '0' | '1' | 'infinity'
+		if collections:
+			subclx = [ copy.copy (self.index).set_colluuid (uuid) for uuid in self.index.list_index () ]
+		else:
+			subclx = [ ]
+		if resources:
+			subres = self.index.load_all_resources ()
+		else:
+			subres = [ ]
+		if add_self:
+			me = [ self.index ]
+		else:
+			me = [ ]
+		if depth_first:
+			# containers before content
+			return me + subclx + subres
+		else:
+			# content before containers
+			return subres + subclx + me
+
+	# def get_directory_info (self)
+	# def get_display_info (self)
+	#   -> Not sure what to do here
+
+	# def get_etag (self)
+	#   -> Not really useful for a Collection
+
+	def get_href (self):
+		#TODO# Is there a prefix path?  Is this the mount_path?
+		return '/' + self.index.get_colluuid () + '/'
+
+	def get_last_modified (self):
+		# Not supported:
+		return None
 
 	def get_member (self, name):
-		if name and uuid_re.match (name):
-			if isinstance (self, ResourceAppCollection):
-				# The domain/user colluuid may be overridden
-				member_dn = self.colldn (name)
-				member_script = '/' + name
-			elif isinstance (self, Resource):
-				# Already at the terminal node of a Resource
-				# Does not happen!  Not here!
-				return None
-			else:
-				raise NotImplementedError ('#TODO# Lookup the Resource by the given name')
+		if uuid_re.match (name):
+			res = self.index.load_resource (name)
+			#TODO# We have a reservoir.Resource; wrap as ReservoirResource
+			return res
 		else:
-			raise NotImplementedError ('#TODO# Lookup reservoirRef by name (allowing None)')
-		raise NotImplementedError ('#TODO# Check collection ACL at member_dn, return if okay')
+			flt = '(uniqueIdentifier=%s)' % urllib.parse.quote (name)
+			fnd = reservoir.search_resources (self.index, flt)
+			if len (fnd) == 0:
+				return None
+			elif len (fnd) > 0:
+				raise Exception ('Multiple Resources by that name (dataset consistency error)'
+			else:
+				for res in fnd.values ():
+					#TODO# We have a reservoir.Resource; wrap as ReservoirResource
+					return res
+
+	def get_member_list (self):
+		return self.index.load_all_resources ()
 
 	def get_member_names (self):
-		raise NotImplementedError ('#TODO# Retrieve names of reservoirRef values')
+		return [ res ['uniqueIdentifier'] for res in self.get_member_list () ]
 
-	#DEFAULT# def support_recursive_delete (self):
+	def get_preferred_path (self):
+		return '/%s/' % self.index.get_colluuid ()
 
-	def delete (self):
-		"""Delete the current Collection and its Resources.
-		   Do not remove references to other Collections, but
-		   TODO:SOMEDAY mark them as potentially orphaned.
-		"""
-		raise NotImplementedError ("#TODO# Delete collection and resources from LDAP and files")
+	# def get_properties (self, mode, name_list=None):
+	# def get_property_names (self, is_allprop):
+	# def get_property_value (self, name)
+	#   --> not overridden
 
-	def copy_move_single (self, dest_path, is_move):
-		raise NotImplementedError ('#TODO# Copy or Move a single file')
+	def get_ref_url (self):
+		return '/%s/' % self.index.get_colluuid ()
 
-	#DEFAULT# def support_recursive_move (self, dest_path):
+	# def handle_copy (self, dest_path, depth_infinity)
+	# def handle_delete (self)
+	# def handle_move (self)
+	# def is_locked (self)
+	# def move_recursive (self, dest_path)
+	# def prevent_locking (self)
+	# def remove_all_locks (self)
+	# def remove_all_properties (self, recursive)
+	#   -> not overridden
 
 	def resolve (self, script_name, path_info):
-		"""Resolve a resource.  Only the first and last elements
-		   of the path_info may be a UUID, for collection and
-		   resource, respectively.  Just one UUID is considered
-		   a collection.  Path elements between first and last
-		   are resolved as index names, changing the original
-		   collection UUID.
-		"""
-		elem = path_info.strip ('/').split ('/')
-		if len (elem) == 0:
-			# No path, return the base object
-			return self
-		elif uuid_re.match (elem [0]):
-			# Initial UUID indicates a Collection
-			cursor = 
-			elem = elem [1:]
-		# Step through all but the outer path elements
-		for step in elem [:-2]:
-			assert not uuid_re.match (step), 'Unexpected UUID in path'
-			cursor = cursor.get_member (step)
-		# Retrieve a Resource if the last path element is a UUID
-		if len (elem) < 2:
-			pass
-		elif uuid_re.match (elem [-1]):
-			# Lookup the last element as a UUID
-			cursor = cursor.ReservoirResource (
-				cursor.get_preferred_path () + '/' + elem [-1],
-				self.environ)
-		else:
-			# First try as a Collection, else Resource
-			try:
-				cursor = cursor.get_member (elem [-1])
-			except:
-				raise NotImplementedError ('#TODO# Lookup resource by name in LDAP')
-		return cursor
+		here = copy.copy (self.index)
+		(uri,clx,res) = reservoir.uri_canonical (
+					self.domain, cursor=here,
+					path=path_info, domain_relative=True)
+		self.script = '%s/%s%s' % (homedir,self.domain,uri)
+		#TODO# wrap res or clx
+		return res or clx
+
+	#   -> Not implemented yet
+
+	# def set_last_modified (self, dest_path, time_stamp, dry_run)
+	# def set_property_value (self, name, value, dry_run)
+	#   -> not overridden
+
+	def support_content_length (self):
+		return False
+
+	def support_etag (self):
+		return False
+
+	def support_modified (self):
+		return False
+
+	def support_ranges (self):
+		return False
+
+	def support_recursive_delete (self):
+		return False
+
+	def support_recursive_move (self, dest_path):
+		return False
 
 
-class ReservoirResourceAppCollection (ResourceIndex):
+class ReservoirHomeIndex (ResourceIndex):
 	"""The wrapper for a Resource Resource App Collection.
 	   This finds an initial Resource Index, based on the domain
 	   and an optional user.  The app name is looked up from this
@@ -232,61 +403,96 @@ class ReservoirResourceAppCollection (ResourceIndex):
 
 	def __init__ (self, path, environ, domain=None, user=None, app=None):
 		ResourceIndex.__init__ (self, path, environ)
-		app    = environ ['wsgidav.config'] ['app'   ]
-		realms = environ ['wsgidav.config'] ['realms']
-		realm  = environ ['HTTP_HOST'].split (':') [0]
-		#TODO# %-escape for LDAP DN
-		dn = 'ou=Reservoir,o=arpa2.net,ou=InternetWide'
-		dn = 'associatedDomain=%s,%s' % (self.domain,dn)
-		self.basedn = dn
+		#TODO# Is this really part of environ?
+		apphint = environ ['wsgidav.config'] ['apphint']
+		homedir = environ ['wsgidav.config'] ['homedir']
+		host    = environ ['HTTP_HOST'].split (':') [0]
+		self.apphint = apphint
+		self.domain  = host   #TODO# host2domain
+		self.user = None
+		#TODO# Consider using arpa2.wsgi.byoid instead
 		if 'LOCAL_USER' not in environ and 'HTTP_USER' in environ:
 			environ ['LOCAL_USER'] = urllib.unquote (
 					environ ['HTTP_USER'])
 		if 'LOCAL_USER' in environ:
-			# user = environ ['LOCAL_USER']
-			dn = 'uid=%s,%s' % (environ ['LOCAL_USER'], dn)
+			self.user = environ ['LOCAL_USER']
 		elif path [:2] == '/~' and len (path) >= 3:
 			slash = path.find ('/', 2)
 			if slash > -1:
-				# user = path [2:slash-1]
-				dn = 'uid=%s,%s' % (path [2:slash-1], dn)
+				self.user = path [2:slash-1]
 				path = path [slash:]
 			else:
-				# user = path [2:]
-				dn = 'uid=%s,%s' % (path [2:], dn)
+				self.user = path [2:]
 				path = ''
-		self.dn = dn
-		self.home_index = self.get_member (app)
-		self.dn = self.home_index.dn
-		self.script = realms + '/' + realm
+		#UNUSED# if self.user is None:
+		#UNUSED# 	self.home_index = reservoir.get_domain (self.domain)
+		#UNUSED# else:
+		#UNUSED# 	self.home_index = reservoir.get_domain_user (self.domain, self.user)
+		#UNUSED# if apphint is not None:
+		#UNUSED# 	self.home_index.set_apphint (apphint)
+		#UNUSED# self.home_index.use_apphint ()
+		#UNUSED# colluuid = self.home_index.get_colluuid ()
+		#UNUSED# self.script = '%s/%s/%s' % (homedir,domain,colluuid)
 
 	def resolve (self, path):
-		return self.home_index.resolve (
-				self.script, path,
-				is_prefix=True)
+		(uri,clx,res) = reservoir.uri_canonical (
+					self.domain, self.user, self.apphint,
+					path, domain_relative=True)
+		self.script = '%s/%s%s' % (homedir,domain,uri)
+		#TODO# wrap res or clx
+		return res or clx
 
 
 #
 # WebDAV Provider for ARPA2 Reservoir
-#  - realms:   directory holding %{REALM}s/%{COLLECTION}s/%{RESOURCE}s
+#  - homedir:  directory holding %{REALM}s/%{COLLECTION}s/%{RESOURCE}s
 #  - ldapuri:  LDAP URI to connect to (TODO: no authentication yet)
+#  - apphint:  Application-suggested entry from the Home Index
 #  - readonly: whether changes are permitted
 #
 
 class ARPA2ReservoirProvider(DAVProvider):
 
-	def __init__ (self, ldapuri, realms, app, readonly):
+	def __init__ (self, ldapuri, homedir, apphint, readonly):
 		DAVProvider.__init__ (self)
-		self.ldapuri  = ldapuri
-		self.realms   = realms
-		self.app      = app
-		self.readonly = readonly
+		self.ldapuri  = ldapuri      # Required argument
+		self.homedir  = homedir      # Default "/var/arpa2/reservoir"
+		self.apphint  = apphint      # Default None
+		self.readonly = readonly     # Default False
+
+	# def custom_request_handler (self, environ, ...)
+	#   --> not the present intention
+
+	# def exists (self, path, environ)
+	#   --> handled in parent
+	#   --> we have no efficient implementation
+	#   --> will only be used as a last choice
+
+	def get_resource_inst(self, path, environ):
+		prefix = ResourceHomeIndex ('/', environ)
+		# Resolve path and return whatever it finds
+		return prefix.resolve (self.homedir, path)
+
+	# def is_collection (self, path, environ)
+	#   --> handled in parent
+	#   --> we have no efficient implementation
+	#   --> will only be used as a last choice
 
 	def is_readonly (self):
 		return self.readonly
 
-	def get_resource_inst(self, path, environ):
-		prefix = ResourceAppCollection ('/', environ)
-		# Resolve path and return whatever it finds
-		return prefix.resolve (script, path)
+	# def ref_url_to_path (self, ref_url)
+	#   --> handled in parent
+
+	# def set_lock_manager (self, lock_manager)
+	#   --> handled in parent
+
+	# def set_mount_path (self, mount_path)
+	#   --> handled in parent
+
+	# def set_prop_manager (self, prop_manager)
+	#   --> handled in parent
+
+	# def set_share_path (self, share_path)
+	#   --> handled in parent
 
