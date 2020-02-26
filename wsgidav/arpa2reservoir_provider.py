@@ -48,6 +48,7 @@ to represent indexes (such as directories, domains or users) respectively.
 
 import os
 import re
+import copy
 import uuid
 import urllib
 
@@ -140,7 +141,9 @@ class ReservoirResource (DAVNonCollection):
 	#   --> Not implemented yet
 
 	def get_descendants (self, collections=True, resources=True, depth_first=False, depth='infinity', add_self=False):
-		return [ self.resource ]
+		#TODO#TEST#
+		return [ self ]
+		#TODO#TEST#
 
 	# def get_directory_info (self)
 	# Used in dir_browser/_dir_browser.py ; looks at href, ofe_prefix,
@@ -261,7 +264,7 @@ class ReservoirIndex (DAVCollection):
 		assert not uuid_re.match (collname), 'Collection names must not look like UUIDs'
 		clx = copy.copy (self.index)
 		reservoir.add_collection (clx, collname)
-		return ReservoirCollection (clx, self.path, self.environ)
+		return ReservoirIndex (clx, self.path, self.environ)
 
 	def create_empty_resource (self, name):
 		assert not uuid_re.match (name), 'Resource names must not look like UUIDs'
@@ -292,6 +295,9 @@ class ReservoirIndex (DAVCollection):
 	#   -> Not implemented yet
 
 	def get_descendants (self, collections=True, resources=True, depth_first=False, depth='infinity', add_self=False):
+		#TODO#TEST#
+		return [ self ]
+		#TODO#TEST#
 		#TODO# depth... '0' | '1' | 'infinity'
 		if collections:
 			subclx = [ copy.copy (self.index).set_colluuid (uuid) for uuid in self.index.list_index () ]
@@ -327,7 +333,7 @@ class ReservoirIndex (DAVCollection):
 
 	def get_href (self):
 		#TODO# Is there a prefix path?  Is this the mount_path?
-		return '/' + self.index.get_colluuid () + '/'
+		return '/%s/' % (self.index.get_colluuid(),)
 
 	def get_last_modified (self):
 		# Not supported:
@@ -377,16 +383,20 @@ class ReservoirIndex (DAVCollection):
 	#   --> move/copy/del may be more efficiently done directly on LDAP
 
 	def resolve (self, script_name, path_info):
+		assert path_info [:1] in ('/',''), 'Invalid path'
+		path_info = path_info [1:].split ('/')
+		if path_info [-1:] == ['']:
+			path_info = path_info [:-1]
 		here = copy.copy (self.index)
 		domain = self.index.get_domain ()
 		(uri,clx,res) = reservoir.uri_canonical (
 					domain, cursor=here,
 					path=path_info, domain_relative=True)
-		self.script = '%s/%s%s' % (provider.homedir,domain,uri)
+		self.script = '%s/%s%s' % (self.provider.homedir,domain,uri)
 		if res is not None:
-			return ReservoirResource   (res, self.path, self.environ)
+			return ReservoirResource (res, self.path, self.environ)
 		else:
-			return ReservoirCollection (clx, self.path, self.environ)
+			return ReservoirIndex    (clx, self.path, self.environ)
 
 	# def set_last_modified (self, dest_path, time_stamp, dry_run)
 	# def set_property_value (self, name, value, dry_run)
@@ -419,6 +429,9 @@ def _host2domain (homedir, host):
 	    - Virtual hosts may not be named under the domain
 	    - Subdomains may not be locally known / detected
 	"""
+	#TODO#TEST#
+	return 'arpa2.org'
+	#TODO#TEST#
 	while True:
 		if os.path.exists ('%s/%s' % (homedir,host)):
 			return host
@@ -427,7 +440,7 @@ def _host2domain (homedir, host):
 		host = host [dot+1:]
 
 
-class ReservoirHomeIndex (ResourceIndex):
+class ReservoirHomeIndex (ReservoirIndex):
 	"""The wrapper for a Resource Resource App Collection.
 	   This finds an initial Resource Index, based on the domain
 	   and an optional user.  The app name is looked up from this
@@ -439,10 +452,9 @@ class ReservoirHomeIndex (ResourceIndex):
 	   locate other objects.
 	"""
 
-	def __init__ (self, path, environ):
-		ResourceIndex.__init__ (self, path, environ)
-		host    = environ ['HTTP_HOST'].split (':') [0]
-		self.domain  = _host2domain (self.provider.homedir, host)
+	def __init__ (self, homedir, path, environ):
+		host = environ ['HTTP_HOST'].split (':') [0]
+		self.domain  = _host2domain (homedir, host)
 		self.user = None
 		#TODO# Consider using arpa2.wsgi.byoid instead
 		if 'LOCAL_USER' not in environ and 'HTTP_USER' in environ:
@@ -458,17 +470,25 @@ class ReservoirHomeIndex (ResourceIndex):
 			else:
 				self.user = path [2:]
 				path = ''
-		#TODO# How to make this path widely used?
+			#TODO# How to make this path widely used?
+			raise Exception ('You should not access /~username without arpa2.wsgi.byoid')
+		if self.user is None:
+			idx = reservoir.get_domain_user (self.domain, self.user)
+		else:
+			idx = reservoir.get_domain      (self.domain           )
+		ReservoirIndex.__init__ (self, idx, path, environ)
+		idx.set_apphint (self.provider.apphint)
+		idx.use_apphint ()
 
-	def resolve (self, path):
+	def resolve_TODO_INHERITED (self, script, path):
 		(uri,clx,res) = reservoir.uri_canonical (
 					self.domain, self.user, self.provider.apphint,
 					path, domain_relative=True)
 		self.script = '%s/%s%s' % (self.provider.homedir,self.domain,uri)
 		if res is not None:
-			return ReservoirResource   (res, self.path, self.environ)
+			return ReservoirResource (res, self.path, self.environ)
 		else:
-			return ReservoirCollection (clx, self.path, self.environ)
+			return ReservoirIndex    (clx, self.path, self.environ)
 
 
 #
@@ -496,8 +516,8 @@ class ARPA2ReservoirProvider(DAVProvider):
 	#   --> we have no efficient implementation
 	#   --> will only be used as a last choice
 
-	def get_resource_inst(self, path, environ):
-		prefix = ResourceHomeIndex ('/', environ)
+	def get_resource_inst (self, path, environ):
+		prefix = ReservoirHomeIndex (self.homedir, '/', environ)
 		# Resolve path and return whatever it finds
 		return prefix.resolve (self.homedir, path)
 
