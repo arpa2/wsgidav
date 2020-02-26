@@ -85,6 +85,19 @@ class ReservoirResource (DAVNonCollection):
 		self.resource = wrap_resource
 		self.resfile = None
 
+	def _cn (self):
+		for cn in self.resource ['cn']:
+			return cn
+		return self._uniqid ()
+
+	def _uniqid (self):
+		(uniqid,) = self.resource ['uniqueIdentifier']
+		return uniqid
+
+	def _mediaType (self):
+		(mtype,) = self.resource ['mediaType']
+		return mtype
+
 	def begin_write (self, content_type=None):
 		if self.provider.readonly:
 			raise DAVError (HTTP_FORBIDDEN)
@@ -123,27 +136,25 @@ class ReservoirResource (DAVNonCollection):
 	def get_content (self):
 		if self.resfile is not None:
 			self.resfile.close ()
-		isbin = self.resource ['mediaType'] [0] [:5] != 'text/'
+		isbin = self._mediaType () [:5] != 'text/'
 		self.resfile = self.resource.open (writing=False, reading=True, binary=isbin)
 		return self.resfile
 
 	def get_content_length (self):
 		size = 0
-		for hash in self ['documentHash']:
+		for hash in self.resource ['documentHash']:
 			if hash [:6] == '_size ':
 				size = int (hash [6:])
 		return size
 
 	def get_content_type (self):
-		return self.resource ['mediaType'] [0]
+		return self._mediaType ()
 
 	# def get_creation_date (self)
 	#   --> Not implemented yet
 
-	def get_descendants (self, collections=True, resources=True, depth_first=False, depth='infinity', add_self=False):
-		#TODO#TEST#
-		return [ self ]
-		#TODO#TEST#
+	# def get_descendants (self, collections=True, resources=True, depth_first=False, depth='infinity', add_self=False)
+	#   -> Default is quite alright (no efficiency improvements expected with LDAP)
 
 	# def get_directory_info (self)
 	# Used in dir_browser/_dir_browser.py ; looks at href, ofe_prefix,
@@ -153,13 +164,13 @@ class ReservoirResource (DAVNonCollection):
 
 	def get_display_info (self):
 		# Used in dir_browser/_dir_browser.py ; looks at type, typeComment
-		return { 'type': 'Resource', 'typeComment': 'media %s' % self.resource ['mediaType'] [0] }
+		return { 'type': 'Resource', 'typeComment': 'media %s' % self._mediaType () }
 
 	def get_display_name (self):
 		if 'cn' in self.resource:
-			return self.resource ['cn'] [0]
+			return self._cn ()
 		else:
-			return self.resource ['uniqueIdentifier'] [0]
+			return self._uniqid ()
 
 	def get_etag (self):
 		for hash in self ['documentHash']:
@@ -294,29 +305,8 @@ class ReservoirIndex (DAVCollection):
 	# def get_creation_date (self)
 	#   -> Not implemented yet
 
-	def get_descendants (self, collections=True, resources=True, depth_first=False, depth='infinity', add_self=False):
-		#TODO#TEST#
-		return [ self ]
-		#TODO#TEST#
-		#TODO# depth... '0' | '1' | 'infinity'
-		if collections:
-			subclx = [ copy.copy (self.index).set_colluuid (uuid) for uuid in self.index.list_index () ]
-		else:
-			subclx = [ ]
-		if resources:
-			subres = self.index.load_all_resources ()
-		else:
-			subres = [ ]
-		if add_self:
-			me = [ self.index ]
-		else:
-			me = [ ]
-		if depth_first:
-			# containers before content
-			return me + subclx + subres
-		else:
-			# content before containers
-			return subres + subclx + me
+	# def get_descendants (self, collections=True, resources=True, depth_first=False, depth='infinity', add_self=False)
+	#   -> Default is quite alright (no efficiency improvements expected with LDAP)
 
 	# def get_directory_info (self)
 	# Used in dir_browser/_dir_browser.py ; looks at href, ofe_prefix,
@@ -341,9 +331,16 @@ class ReservoirIndex (DAVCollection):
 
 	def get_member (self, name):
 		if uuid_re.match (name):
+			# UUID underneath a Collection; must be a Resource
 			res = self.index.load_resource (name)
-			return ReservoirResource (res, self.path, self.environ)
+			return ReservoirResource   (res, self.path, self.environ)
+		elif name in self.index:
+			# Key into the index; must be a reservoirRef to a Collection
+			clx = copy.copy (self.index)
+			clx.set_colluuid (self.index [name])
+			return ReservoirIndex (clx, self.path, self.environ)
 		else:
+			# Neither; must be a uniqueIdentifier of a Resource
 			flt = '(uniqueIdentifier=%s)' % urllib.parse.quote (name)
 			fnd = reservoir.search_resources (self.index, flt)
 			if len (fnd) == 0:
@@ -355,10 +352,23 @@ class ReservoirIndex (DAVCollection):
 					return ReservoirResource (res, self.path, self.environ)
 
 	def get_member_list (self):
-		return self.index.load_all_resources ()
+		#TODO# Generator style!
+		allres = [ ]
+		for r in self.index.load_all_resources ():
+			cid = self.index.get_colluuid ()
+			(rid,) = r ['uniqueIdentifier']
+			rid = urllib.parse.quote (rid)
+			allres.append (ReservoirResource (r, '/%s/%s' % (cid,rid), self.environ))
+		allclx = [ ]
+		for k in self.index.keys ():
+			idx = copy.copy (self.index)
+			idx.set_colluuid (k)
+			allclx.append (ReservoirIndex (idx, '%s%s/' % (self.path,k), self.environ))
+		return allres + allclx
 
 	def get_member_names (self):
-		return [ res ['uniqueIdentifier'] for res in self.get_member_list () ]
+		#TODO# Bound to fail: (1) we also list Collections, (2) we have wrappers
+		return [ res._uniqid () for res in self.get_member_list () ]
 
 	def get_preferred_path (self):
 		return '/%s/' % self.index.get_colluuid ()
@@ -384,9 +394,7 @@ class ReservoirIndex (DAVCollection):
 
 	def resolve (self, script_name, path_info):
 		assert path_info [:1] in ('/',''), 'Invalid path'
-		path_info = path_info [1:].split ('/')
-		if path_info [-1:] == ['']:
-			path_info = path_info [:-1]
+		path_info = [ urllib.parse.unquote_plus (step) for step in path_info [1:].split ('/') if step != '' ]
 		here = copy.copy (self.index)
 		domain = self.index.get_domain ()
 		(uri,clx,res) = reservoir.uri_canonical (
@@ -458,7 +466,7 @@ class ReservoirHomeIndex (ReservoirIndex):
 		self.user = None
 		#TODO# Consider using arpa2.wsgi.byoid instead
 		if 'LOCAL_USER' not in environ and 'HTTP_USER' in environ:
-			environ ['LOCAL_USER'] = urllib.unquote (
+			environ ['LOCAL_USER'] = urllib.parse.unquote (
 					environ ['HTTP_USER'])
 		if 'LOCAL_USER' in environ:
 			self.user = environ ['LOCAL_USER']
