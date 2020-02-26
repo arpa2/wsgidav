@@ -51,7 +51,7 @@ from wsgidav import __version__, compat, util
 from wsgidav.dav_provider import DAVProvider
 from wsgidav.default_conf import DEFAULT_CONFIG
 from wsgidav.fs_dav_provider import FilesystemProvider
-from wsgidav.arpa2reservoir_Provider import ARPA2ReservoirProvider
+from wsgidav.arpa2reservoir_provider import ARPA2ReservoirProvider
 from wsgidav.http_authenticator import HTTPAuthenticator
 from wsgidav.lock_manager import LockManager
 from wsgidav.lock_storage import LockStorageDict

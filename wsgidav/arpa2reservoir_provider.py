@@ -47,27 +47,11 @@ to represent indexes (such as directories, domains or users) respectively.
 
 
 import os
-
 import re
-
-uuid_re = re.compile ('^(?P<uuid>[0-9a-f]{8,8}-[0-9a-f]{4,4}-[0-9a-f]{4,4}-[0-9a-f]{4,4}--[0-9a-f]{12,12})$')
-
-
 import uuid
-
-reservoir_uuid = '904dfdb5-6b34-3818-b580-b9a0b4f7e7a9'
-
-def random_uuid ():
-	return str (uuid.uuid4 ()).lower ()
-
-
 import urllib
 
-
-
 from arpa2 import reservoir
-
-
 
 
 #
@@ -80,18 +64,29 @@ from wsgidav.dav_provider import DAVCollection, DAVNonCollection, DAVProvider
 
 
 #
+# Regular Expressions
+#
+
+uuid_re = re.compile ('^(?P<uuid>[0-9a-f]{8,8}-[0-9a-f]{4,4}-[0-9a-f]{4,4}-[0-9a-f]{4,4}--[0-9a-f]{12,12})$')
+
+
+#
 # WebDAV Resources
 #
 
 class ReservoirResource (DAVNonCollection):
+	"""ReservoirResource is a wsgidav interface wrapping
+	   arpa2.reservoir.Resource.
+	"""
 
-	def __init__ (self, path, environ):
+	def __init__ (self, wrap_resource, path, environ):
 		DAVNonCollection.__init__ (self, path, environ)
+		self.resource = wrap_resource
 		self.resfile = None
 
-	#TODO# Construct from reservoir.Resource
-
 	def begin_write (self, content_type=None):
+		if self.provider.readonly:
+			raise DAVError (HTTP_FORBIDDEN)
 		if self.resfile is not None:
 			self.resfile.close ()
 		if content_type is not None:
@@ -100,19 +95,26 @@ class ReservoirResource (DAVNonCollection):
 		self.resfile = self.resource.open (writing=True, reading=False, binary=isbin, truncate=True)
 		return self.resfile
 
-	# def copy_move_single (self, dest_path, is_move)
-	#   --> Not implemented yet
+	def copy_move_single (self, dest_path, is_move):
+		if self.provider.readonly:
+			raise DAVError (HTTP_FORBIDDEN)
+		#   --> Not implemented yet
+		raise DAVError (HTTP_FORBIDDEN)
 
 	# def create_collection (self, name)
 	# def create_empty_resource (self, name)
 	#   --> Default implementation is fine
 
-	# def delete (self)
-	#   --> Not implemented yet
+	def delete (self):
+		if self.provider.readonly:
+			raise DAVError (HTTP_FORBIDDEN)
+		#   --> Not implemented yet
+		raise DAVError (HTTP_FORBIDDEN)
 
 	def end_write (self, with_errors):
 		self.resfile.close ()
 		self.resfile = None
+		self.resource.commit ()
 
 	# def finalize_headers (self, environ, response_headers)
 	#   --> No intention of doing anything
@@ -141,8 +143,14 @@ class ReservoirResource (DAVNonCollection):
 		return [ self.resource ]
 
 	# def get_directory_info (self)
-	# def get_display_info (self)
+	# Used in dir_browser/_dir_browser.py ; looks at href, ofe_prefix,
+	#	a_class, tr_class, display_name, is_collection, content_length,
+	#	display_type, display_type_comment.
 	#   --> Default kept as is
+
+	def get_display_info (self):
+		# Used in dir_browser/_dir_browser.py ; looks at type, typeComment
+		return { 'type': 'Resource', 'typeComment': 'media %s' % self.resource ['mediaType'] [0] }
 
 	def get_display_name (self):
 		if 'cn' in self.resource:
@@ -183,12 +191,15 @@ class ReservoirResource (DAVNonCollection):
 	# def handle_delete (self)
 	# def handle_move (self, dest_path)
 	#   --> Used the default implementation
+	#   --> May be more efficiently done directly on LDAP
 
 	# def is_locked (self)
 	#   --> Assumed the default implementation will work
 
 	# def move_recursive (self, dest_path)
 	#   --> Not implemented here
+	#   --> Meaningless for a Resource
+	#   --> May be more efficiently done directly on LDAP
 
 	# def prevent_locking (self)
 	# def remove_all_locks (self, recursive)
@@ -228,26 +239,29 @@ class ReservoirResource (DAVNonCollection):
 
 
 class ReservoirIndex (DAVCollection):
+	"""ReservoirIndex is a wsgidav interface wrapping arpa2.reservoir.Index
+	   where the wsgidav objects do not move like a cursor, but point to a
+	   fixed location.
+	"""
 
-	def __init__ (self, path, environ, domain, colluuid):
-		DAVCollection.__init__ (self, path, environ, domain, colluuid)
-		self.domain = domain
-		self.colluuid = colluuid
-
-	#TODO# Construct from reservoir.Index
+	def __init__ (self, wrap_index, path, environ):
+		DAVCollection.__init__ (self, path, environ)
+		self.index  = wrap_index
 
 	# def begin_write (self, mediatype):
 	#   -> Not sure what it means to a Collection...
 
-	# def copy_move_single (self, dest_path, ...)
-	#   -> Not yet implemented
+	def copy_move_single (self, dest_path, is_move):
+		if self.provider.readonly:
+			raise DAVError (HTTP_FORBIDDEN)
+		#   --> Not implemented yet
+		raise DAVError (HTTP_FORBIDDEN)
 
 	def create_collection (self, collname):
 		assert not uuid_re.match (collname), 'Collection names must not look like UUIDs'
 		clx = copy.copy (self.index)
 		reservoir.add_collection (clx, collname)
-		#TODO# We have a reservoir.Index, wrap it in a ReservoirIndex
-		return clx
+		return ReservoirCollection (clx, self.path, self.environ)
 
 	def create_empty_resource (self, name):
 		assert not uuid_re.match (name), 'Resource names must not look like UUIDs'
@@ -255,11 +269,13 @@ class ReservoirIndex (DAVCollection):
 				objectClass=['reservoirResource'],
 				mediaType=['application/octet-stream'],  # Lack of info :'-(
 				uniqueIdentifier=[name])
-		#TODO# We have a reservoir.Resource, wrap it in a ReservoirResource
-		return res
+		return ReservoirResource (res, self.path, self.environ)
 
-	# def delete (self)
-	#   -> Not yet implemented
+	def delete (self):
+		if self.provider.readonly:
+			raise DAVError (HTTP_FORBIDDEN)
+		#   --> Not implemented yet
+		raise DAVError (HTTP_FORBIDDEN)
 
 	# def end_write (self)
 	#   -> Not sure what it means to a Collection...
@@ -297,8 +313,14 @@ class ReservoirIndex (DAVCollection):
 			return subres + subclx + me
 
 	# def get_directory_info (self)
-	# def get_display_info (self)
+	# Used in dir_browser/_dir_browser.py ; looks at href, ofe_prefix,
+	#	a_class, tr_class, display_name, is_collection, content_length,
+	#	display_type, display_type_comment.
 	#   -> Not sure what to do here
+
+	def get_display_info (self):
+		# Used in dir_browser/_dir_browser.py ; looks at type, typeComment
+		return { 'type': 'Resource Collection' }
 
 	# def get_etag (self)
 	#   -> Not really useful for a Collection
@@ -314,19 +336,17 @@ class ReservoirIndex (DAVCollection):
 	def get_member (self, name):
 		if uuid_re.match (name):
 			res = self.index.load_resource (name)
-			#TODO# We have a reservoir.Resource; wrap as ReservoirResource
-			return res
+			return ReservoirResource (res, self.path, self.environ)
 		else:
 			flt = '(uniqueIdentifier=%s)' % urllib.parse.quote (name)
 			fnd = reservoir.search_resources (self.index, flt)
 			if len (fnd) == 0:
 				return None
 			elif len (fnd) > 0:
-				raise Exception ('Multiple Resources by that name (dataset consistency error)'
+				raise Exception ('Multiple Resources by that name (dataset consistency error)')
 			else:
 				for res in fnd.values ():
-					#TODO# We have a reservoir.Resource; wrap as ReservoirResource
-					return res
+					return ReservoirResource (res, self.path, self.environ)
 
 	def get_member_list (self):
 		return self.index.load_all_resources ()
@@ -353,18 +373,20 @@ class ReservoirIndex (DAVCollection):
 	# def prevent_locking (self)
 	# def remove_all_locks (self)
 	# def remove_all_properties (self, recursive)
-	#   -> not overridden
+	#   --> not overridden
+	#   --> move/copy/del may be more efficiently done directly on LDAP
 
 	def resolve (self, script_name, path_info):
 		here = copy.copy (self.index)
+		domain = self.index.get_domain ()
 		(uri,clx,res) = reservoir.uri_canonical (
-					self.domain, cursor=here,
+					domain, cursor=here,
 					path=path_info, domain_relative=True)
-		self.script = '%s/%s%s' % (homedir,self.domain,uri)
-		#TODO# wrap res or clx
-		return res or clx
-
-	#   -> Not implemented yet
+		self.script = '%s/%s%s' % (provider.homedir,domain,uri)
+		if res is not None:
+			return ReservoirResource   (res, self.path, self.environ)
+		else:
+			return ReservoirCollection (clx, self.path, self.environ)
 
 	# def set_last_modified (self, dest_path, time_stamp, dry_run)
 	# def set_property_value (self, name, value, dry_run)
@@ -389,6 +411,22 @@ class ReservoirIndex (DAVCollection):
 		return False
 
 
+def _host2domain (homedir, host):
+	"""Given a host name, go up in DNS until hitting something
+	   that is listed in the arpa2reservoir homedir.
+	   
+	   TODO: This is a poor solution, explicit mapping is best.
+	    - Virtual hosts may not be named under the domain
+	    - Subdomains may not be locally known / detected
+	"""
+	while True:
+		if os.path.exists ('%s/%s' % (homedir,host)):
+			return host
+		# Raise an exception if no levels are left
+		dot = host.index ('.')
+		host = host [dot+1:]
+
+
 class ReservoirHomeIndex (ResourceIndex):
 	"""The wrapper for a Resource Resource App Collection.
 	   This finds an initial Resource Index, based on the domain
@@ -401,14 +439,10 @@ class ReservoirHomeIndex (ResourceIndex):
 	   locate other objects.
 	"""
 
-	def __init__ (self, path, environ, domain=None, user=None, app=None):
+	def __init__ (self, path, environ):
 		ResourceIndex.__init__ (self, path, environ)
-		#TODO# Is this really part of environ?
-		apphint = environ ['wsgidav.config'] ['apphint']
-		homedir = environ ['wsgidav.config'] ['homedir']
 		host    = environ ['HTTP_HOST'].split (':') [0]
-		self.apphint = apphint
-		self.domain  = host   #TODO# host2domain
+		self.domain  = _host2domain (self.provider.homedir, host)
 		self.user = None
 		#TODO# Consider using arpa2.wsgi.byoid instead
 		if 'LOCAL_USER' not in environ and 'HTTP_USER' in environ:
@@ -424,23 +458,17 @@ class ReservoirHomeIndex (ResourceIndex):
 			else:
 				self.user = path [2:]
 				path = ''
-		#UNUSED# if self.user is None:
-		#UNUSED# 	self.home_index = reservoir.get_domain (self.domain)
-		#UNUSED# else:
-		#UNUSED# 	self.home_index = reservoir.get_domain_user (self.domain, self.user)
-		#UNUSED# if apphint is not None:
-		#UNUSED# 	self.home_index.set_apphint (apphint)
-		#UNUSED# self.home_index.use_apphint ()
-		#UNUSED# colluuid = self.home_index.get_colluuid ()
-		#UNUSED# self.script = '%s/%s/%s' % (homedir,domain,colluuid)
+		#TODO# How to make this path widely used?
 
 	def resolve (self, path):
 		(uri,clx,res) = reservoir.uri_canonical (
-					self.domain, self.user, self.apphint,
+					self.domain, self.user, self.provider.apphint,
 					path, domain_relative=True)
-		self.script = '%s/%s%s' % (homedir,domain,uri)
-		#TODO# wrap res or clx
-		return res or clx
+		self.script = '%s/%s%s' % (self.provider.homedir,self.domain,uri)
+		if res is not None:
+			return ReservoirResource   (res, self.path, self.environ)
+		else:
+			return ReservoirCollection (clx, self.path, self.environ)
 
 
 #
