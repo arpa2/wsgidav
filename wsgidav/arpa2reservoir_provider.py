@@ -145,9 +145,10 @@ class ReservoirResource (DAVNonCollection):
 
 	def get_content_length (self):
 		size = 0
-		for hash in self.resource ['documentHash']:
-			if hash [:6] == '_size ':
-				size = int (hash [6:])
+		if 'documentHash' in self.resource:
+			for hash in self.resource ['documentHash']:
+				if hash [:6] == '_size ':
+					size = int (hash [6:])
 		return size
 
 	def get_content_type (self):
