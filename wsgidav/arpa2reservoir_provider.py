@@ -54,6 +54,8 @@ import urllib
 
 from arpa2 import reservoir
 
+from ldap import NO_SUCH_OBJECT
+
 
 #
 # Relations to the project context
@@ -103,8 +105,9 @@ class ReservoirResource (DAVNonCollection):
 			raise DAVError (HTTP_FORBIDDEN)
 		if self.resfile is not None:
 			self.resfile.close ()
-		if content_type is not None:
-			self.resource ['mediaType'] = [content_type]
+		if content_type is None:
+			content_type = 'application/octet-stream'
+		self.resource ['mediaType'] = [content_type]
 		isbin = content_type [:5] != 'text/'
 		self.resfile = self.resource.open (writing=True, reading=False, binary=isbin, truncate=True)
 		return self.resfile
@@ -173,9 +176,10 @@ class ReservoirResource (DAVNonCollection):
 			return self._uniqid ()
 
 	def get_etag (self):
-		for hash in self ['documentHash']:
-			if hash [:7] == 'sha256 ':
-				return hash [7:]
+		if 'documentHash' in self.resource:
+			for hash in self.resource ['documentHash']:
+				if hash [:7] == 'sha256 ':
+					return hash [7:]
 		return None
 
 	def get_href (self):
@@ -231,7 +235,7 @@ class ReservoirResource (DAVNonCollection):
 		return True
 
 	def support_etag (self):
-		return 'documentHash' in self.resource.keys ()
+		return 'documentHash' in self.resource
 
 	def support_modified (self):
 		return False
@@ -397,9 +401,14 @@ class ReservoirIndex (DAVCollection):
 		path_info = [ urllib.parse.unquote_plus (step) for step in path_info [1:].split ('/') if step != '' ]
 		here = copy.copy (self.index)
 		domain = self.index.get_domain ()
-		(uri,clx,res) = reservoir.uri_canonical (
-					domain, cursor=here,
-					path=path_info, domain_relative=True)
+		try:
+			(uri,clx,res) = reservoir.uri_canonical (
+						domain, cursor=here,
+						path=path_info, domain_relative=True)
+		except NO_SUCH_OBJECT:
+			return None
+		except KeyError:
+			return None
 		self.script = '%s/%s%s' % (self.provider.homedir,domain,uri)
 		if res is not None:
 			return ReservoirResource (res, self.path, self.environ)
