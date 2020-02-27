@@ -54,7 +54,6 @@ import urllib
 
 from arpa2 import reservoir
 
-from ldap import NO_SUCH_OBJECT
 
 
 #
@@ -115,8 +114,35 @@ class ReservoirResource (DAVNonCollection):
 	def copy_move_single (self, dest_path, is_move):
 		if self.provider.readonly:
 			raise DAVError (HTTP_FORBIDDEN)
-		#   --> Not implemented yet
-		raise DAVError (HTTP_FORBIDDEN)
+		destIdx = copy.copy (self.resource.get_index ())
+		destIdx.reset_home ()
+		destIdx.use_apphint ()
+		davIdx = ReservoirIndex (destIdx, '/', self.environ)
+		found = davIdx.resolve ('/', dest_path)
+		uniqId = None
+		if found is None:
+			rslash = dest_path.rfind ('/')
+			if rslash != -1:
+				found = davIdx.resolve ('/', dest_path [:rslash])
+				uniqId = dest_path [rslash+1:]
+		if found is None:
+			raise Exception ('Failed to locate the destination path')
+		if isinstance (found, ReservoirResource):
+			assert uniqId is None, 'Attempt to move into non-existing Collection'
+			uniqId = found._uniqid ()
+			destIdx = found.get_index ()
+		else:
+			# Presumably, we found a ReservoirCollection
+			destIdx = found.index
+		if is_move:
+			# uniqId may be None
+			reservoir.move_resource  (self.resource, destIdx, uniqId)
+		else:
+			# uniqId must not be None
+			if uniqId is None:
+				uniqId = self.resource._uniqid ()
+			reservoir.clone_resource (self.resource, destIdx, uniqId)
+		self.resource.commit ()
 
 	# def create_collection (self, name)
 	# def create_empty_resource (self, name)
@@ -248,7 +274,7 @@ class ReservoirResource (DAVNonCollection):
 	def support_recursive_delete (self):
 		return False
 
-	def support_recursive_move (self):
+	def support_recursive_move (self, dest_path):
 		return False
 
 
@@ -406,9 +432,8 @@ class ReservoirIndex (DAVCollection):
 			(uri,clx,res) = reservoir.uri_canonical (
 						domain, cursor=here,
 						path=path_info, domain_relative=True)
-		except NO_SUCH_OBJECT:
-			return None
-		except KeyError:
+		except:
+			# Causes: KeyError, ldap.NO_SUCH_OBJECT
 			return None
 		self.script = '%s/%s%s' % (self.provider.homedir,domain,uri)
 		if res is not None:
