@@ -151,8 +151,7 @@ class ReservoirResource (DAVNonCollection):
 	def delete (self):
 		if self.provider.readonly:
 			raise DAVError (HTTP_FORBIDDEN)
-		#   --> Not implemented yet
-		raise DAVError (HTTP_FORBIDDEN)
+		reservoir.del_resource (self.resource)
 
 	def end_write (self, with_errors):
 		self.resfile.close ()
@@ -319,8 +318,8 @@ class ReservoirIndex (DAVCollection):
 	def delete (self):
 		if self.provider.readonly:
 			raise DAVError (HTTP_FORBIDDEN)
-		#   --> Not implemented yet
-		raise DAVError (HTTP_FORBIDDEN)
+		#TODO# Would be correct to be add a recursive flag (not in Reservoir API yet)
+		reservoir.del_collection (self.index, unlink_refs=True, del_resources=True)
 
 	# def end_write (self)
 	#   -> Not sure what it means to a Collection...
@@ -458,6 +457,7 @@ class ReservoirIndex (DAVCollection):
 		return False
 
 	def support_recursive_delete (self):
+		# No recursive delete support yet in the Reservoir API
 		return False
 
 	def support_recursive_move (self, dest_path):
